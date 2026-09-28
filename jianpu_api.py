@@ -1,0 +1,169 @@
+# -*- coding: utf-8 -*-
+"""简谱图片 → 原位替换图 + 「第几行 / 原始数字 / 转换后字母」对照表。
+
+识别本身一行没改，全部复用 `D:\\Letter piano11` 的 jianpu2letter 包：
+`ocr_jianpu` 认谱、`overlay_letters` 把数字原位盖成字母、`mapping` 查键位。
+本文件只做三件事 —— 把包喂进去、把产物落盘、把结果整理成逐音对照。
+
+用法：
+
+    import jianpu_api
+    overlay, table, payload = jianpu_api.convert(r"D:\\Letter piano11\\piano\\7.png",
+                                                 outdir="out")
+    for line in payload["lines"]:
+        for note in line["notes"]:
+            print(note["line"], note["n"], note["letter"])
+
+piano11 不在默认位置时用环境变量指定（也可以拿它把解释器钉死）：
+
+    set JIANPU_PIANO11=D:\\Letter piano11
+"""
+
+import contextlib
+import io
+import json
+import os
+import sys
+
+PIANO11 = os.environ.get("JIANPU_PIANO11") or r"D:\Letter piano11"
+if not os.path.isdir(PIANO11):
+    raise ImportError(f"找不到 jianpu2letter 工程目录：{PIANO11}"
+                      f"（设环境变量 JIANPU_PIANO11 指到正确的目录）")
+if PIANO11 not in sys.path:
+    sys.path.insert(0, PIANO11)
+
+from jianpu2letter import mapping, ocr_jianpu, overlay_letters  # noqa: E402
+
+FORMAT = "jianpu2letter-notes-v1"
+
+_INSTRUCTIONS = [
+    "line / index —— 第几行、该行第几个音（与 overlay 图上和 _review.json 里的 "
+    "L03N029 这种 id 对应）。",
+    "n —— 原谱上的数字：0=休止，1..7=唱名，null=没认出来（overlay 上画了红框）。",
+    "o —— 音区：-1=低音点，0=中音，1=高音点（±2/±3 见 shift）。",
+    "letter —— 转换后的字母谱键位；休止是 \"0\"，认不出来是 null。",
+    "shift —— null / \"LSHIFT\" / \"RSHIFT\"：映射2 里 ±2、±3 音区要按 Shift，"
+    "所以 letter 相同时靠它区分音区。",
+]
+
+
+def _key_mark(raw):
+    """调号统一成 `1=X`。`F` 和 `1=F` 都收；没给就用页眉读到的，再没有才退回 1=C。"""
+    raw = raw or ocr_jianpu._LAST_KEY_MARK
+    if not raw:
+        return "1=C"
+    return raw if str(raw).startswith("1=") else f"1={raw}"
+
+
+def _letter(n, o):
+    """原始数字 + 音区 → 字母谱键位，返回 (letter, shift)。
+
+    休止 `0` 在字母谱里仍然是 `"0"`；(None, None) 表示没有音高 —— 认不出的块
+    （n 为 None），或者音区超出映射2 的范围（只覆盖 -3..3）。
+    """
+    if n is None:
+        return None, None
+    if int(n) == 0:
+        return "0", None
+    try:
+        return mapping.key_for(int(n), int(o or 0))
+    except ValueError:
+        return None, None
+
+
+def _notes_table(measures):
+    """逐音整理成 `lines[].notes[]`。返回 (lines, counts)。
+
+    分行规则**必须与 `review_io.save_review` 逐字一致**（`row` 变了才换行），
+    否则同一张图这里、`_review.json`、网页三处的行号会对不上。
+    """
+    groups, current, current_row = [], [], object()
+    for measure in measures:
+        row = measure.get("row", 0)
+        if current and row != current_row:
+            groups.append(current)
+            current = []
+        current_row = row
+        current.append(measure)
+    if current:
+        groups.append(current)
+
+    lines = []
+    counts = {"total": 0, "letters": 0, "rests": 0, "unknown": 0}
+    for line_no, group in enumerate(groups, 1):
+        notes_out = []
+        for measure in group:
+            for note in measure.get("notes", []):
+                n = note.get("n")
+                o = int(note.get("o", 0) or 0)
+                letter, shift = _letter(n, o)
+                item = {"line": line_no, "index": len(notes_out) + 1,
+                        "n": n, "o": o, "letter": letter}
+                if shift:
+                    item["shift"] = shift
+                if n is None:
+                    item["unknown"] = True
+                notes_out.append(item)
+
+                counts["total"] += 1
+                if n is None:
+                    counts["unknown"] += 1
+                elif letter == "0":
+                    counts["rests"] += 1
+                else:
+                    counts["letters"] += 1
+        lines.append({"line": line_no, "notes": notes_out})
+    return lines, counts
+
+
+def convert(image_path, outdir="out", *, title=None, key=None, meter=None,
+            measure_mode="vline"):
+    """把一张简谱图片转成两样产物，返回 (overlay_path, table_path, payload)。
+
+    - `overlay_path` = `<outdir>/<图片名>_overlay.png`
+      在原谱上**原位**把数字盖成字母：版式、歌词、减时线、连音弧、小节线全部保持
+      像素原样，没认出来的数字保留并画红框。这是核对识别结果最直接的一张图。
+    - `table_path` = `<outdir>/<图片名>_notes.json`
+      逐音对照表，每个音有 line / index / n / o / letter（+ shift / unknown）。
+
+    `title` / `key` / `meter` 不给就从页眉自动读，读不到退回文件名 / `1=C` / `4/4`。
+    `key` 可以写 `F` 或 `1=F`。给了 `title` 和 `key` 会跳过页眉 OCR（省几秒）。
+
+    注意：OCR 用的底图和缩放倍数是 `ocr_jianpu` 的**模块全局**，所以这个函数
+    不是线程安全的 —— 多张图请串行跑。
+    """
+    if not os.path.isfile(image_path):
+        raise FileNotFoundError(f"找不到图片：{image_path}")
+    base = os.path.splitext(os.path.basename(image_path))[0]
+    os.makedirs(outdir, exist_ok=True)
+
+    # OCR 会往 stdout 打很多逐行诊断；收进缓冲区（顺带避开 Windows 控制台 GBK
+    # 编不出 `³` 就整个崩掉的老问题）。想看日志就把这个 StringIO 留下来打印。
+    with contextlib.redirect_stdout(io.StringIO()):
+        measures = ocr_jianpu.ocr_to_stream(
+            image_path, debug_dir=None, measure_mode=measure_mode,
+            header_ocr=not (title and key))
+
+    # 必须**紧挨着**上面那次 OCR：overlay 要的底图（`_LAST_COLOR`）和缩放倍数
+    #（`_LAST_SCALE`）就存在模块全局里，中间隔一次别的识别就会盖到别人的谱上。
+    overlay_path = os.path.join(outdir, base + "_overlay.png")
+    _drawn, _rests, _unknown, ok = overlay_letters.render(measures, overlay_path)
+    if not ok:
+        raise IOError(f"原位替换图写入失败：{overlay_path}")
+
+    lines, counts = _notes_table(measures)
+    payload = {
+        "format": FORMAT,
+        "title": title or ocr_jianpu._LAST_TITLE or base,
+        "key": _key_mark(key),
+        "meter": meter or "4/4",
+        "source": os.path.abspath(image_path),
+        "counts": counts,
+        "_instructions": _INSTRUCTIONS,
+        "lines": lines,
+    }
+    table_path = os.path.join(outdir, base + "_notes.json")
+    with open(table_path, "w", encoding="utf-8") as fp:
+        json.dump(payload, fp, ensure_ascii=False, indent=2)
+        fp.write("\n")
+    return overlay_path, table_path, payload
