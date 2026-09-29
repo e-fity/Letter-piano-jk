@@ -6,6 +6,10 @@ __pycache__/
 out/
 web_out/
 
+# 生成的视频（每首几 MB，随时能重渲）
+*_试演奏.mp4
+webapp.log
+
 # 本机设置（权限白名单、预览器配置之类，不跨机器共享）
 .claude/settings.local.json
 .claude/launch.json

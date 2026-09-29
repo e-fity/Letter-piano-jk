@@ -158,14 +158,26 @@
   }
   .panel .srcname { margin: 4px 0 0; font-size: 12.5px; color: var(--ink-3); }
 
-  dl.meta {
-    display: grid; grid-template-columns: repeat(3, 1fr);
-    margin: 18px 0 0; padding: 12px 0;
+  /* 可编辑的 4 项元信息（曲名/调号/拍号/J）。只改这 4 个字段，不重跑 OCR ——
+     它们不参与识别（调号也不影响字母，字母是「度数→键盘键」）。 */
+  .edit {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 9px 14px;
+    margin: 16px 0 0; padding: 14px 0;
     border-top: 1px solid var(--rule); border-bottom: 1px solid var(--rule);
   }
-  dl.meta div { padding-right: 8px; }
-  dl.meta dt { font-size: 12.5px; color: var(--ink-2); }
-  dl.meta dd { margin: 2px 0 0; font-family: var(--font-sheet); font-size: 17px; }
+  .edit label { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-2); }
+  .edit label > span { flex: 0 0 2.6em; }
+  .edit input {
+    flex: 1; min-width: 0; width: 100%;
+    font: inherit; font-size: 14px; padding: 5px 8px;
+    color: var(--ink); background: var(--paper);
+    border: 1px solid var(--ink-3); border-radius: 0;
+  }
+  .edit input:focus-visible { outline: 2px solid var(--ink); outline-offset: 1px; }
+  .edit .row { grid-column: 1 / -1; display: flex; align-items: center; gap: 12px; }
+  .edit .status { font-size: 12.5px; color: var(--ink-2); }
+  .edit .status.bad { color: var(--proof); }
+  .srcname .hint { color: var(--proof); }
 
   .verdict { margin: 16px 0 0; font-size: 14px; }
   .verdict b { font-weight: 400; font-family: var(--font-sheet); font-size: 16px; }
@@ -261,6 +273,17 @@
       <span class="drop-sub">png、jpg 都行。识别在本机跑，一张大约 15 秒，原图越大越慢。</span>
       <input type="file" id="file" accept="image/*" hidden>
     </label>
+
+    <div class="edit">
+      <label><span>曲名</span><input id="p-title" placeholder="留空 = 从页眉读"></label>
+      <label><span>调号</span><input id="p-key" placeholder="留空 = 从页眉读"></label>
+      <label><span>拍号</span><input id="p-meter" placeholder="留空 = 4/4"></label>
+      <label><span>J</span><input id="p-tempo" inputmode="decimal" placeholder="留空 = 100"></label>
+      <div class="row">
+        <span class="status">可以先填这 4 项：填了「曲名 + 调号」就跳过页眉识别（快几秒）。
+          识别完在右边还能改，改完点保存。</span>
+      </div>
+    </div>
   </section>
 
   <section class="state" id="s-busy" hidden>
@@ -292,11 +315,17 @@
       <h2 id="song">—</h2>
       <p class="srcname" id="srcname"></p>
 
-      <dl class="meta">
-        <div><dt>调号</dt><dd id="m-key">—</dd></div>
-        <div><dt>拍号</dt><dd id="m-meter">—</dd></div>
-        <div><dt>用时</dt><dd id="m-secs">—</dd></div>
-      </dl>
+      <div class="edit">
+        <label><span>曲名</span><input id="e-title" placeholder="（页眉读到的）"></label>
+        <label><span>调号</span><input id="e-key" placeholder="1=C"></label>
+        <label><span>拍号</span><input id="e-meter" placeholder="4/4"></label>
+        <label><span>J</span><input id="e-tempo" inputmode="decimal" placeholder="100"></label>
+        <div class="row">
+          <button class="btn" id="save">保存</button>
+          <span class="status" id="save-status"></span>
+        </div>
+      </div>
+      <p class="srcname">用时 <span id="m-secs">—</span></p>
 
       <p class="verdict" id="verdict"></p>
 
@@ -336,6 +365,7 @@
   const show = (id) => views.forEach(v => { $("#" + v).hidden = v !== id; });
 
   let running = false;
+  let currentBase = null;              // 当前结果在曲库里的名字（保存元信息要用）
 
   // ── 选图 ─────────────────────────────────────────────
   const pick = $("#pick");
@@ -365,6 +395,38 @@
   const cmp = $("#cmp"), slider = $("#slider");
   slider.addEventListener("input", () => cmp.style.setProperty("--x", slider.value + "%"));
 
+  // ── 保存这 4 项元信息（不重跑 OCR，秒回）────────────────
+  const setStatus = (text, bad) => {
+    const el = $("#save-status");
+    el.textContent = text || "";
+    el.classList.toggle("bad", !!bad);
+  };
+
+  $("#save").addEventListener("click", async () => {
+    if (!currentBase) return;
+    setStatus("保存中…", false);
+    try {
+      const res = await fetch("/api/meta", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          base: currentBase,
+          title: $("#e-title").value.trim(),
+          key: $("#e-key").value.trim(),
+          meter: $("#e-meter").value.trim(),
+          tempo_qpm: $("#e-tempo").value.trim(),
+        }),
+      });
+      const data = await res.json();
+      if (!data.ok) throw new Error(data.error || "保存失败。");
+      $("#song").textContent = data.song.title;
+      $("#e-tempo").value = data.song.tempo_qpm ?? "";
+      setStatus("已保存（没重跑识别）", false);
+    } catch (err) {
+      setStatus(err.message, true);
+    }
+  });
+
   // ── 跑 ───────────────────────────────────────────────
   async function run(file) {
     if (running) return;
@@ -381,6 +443,12 @@
 
     const body = new FormData();
     body.append("image", file);
+    // 先填的 4 项一起交上去（留空就不带，让后端走自动/默认）
+    for (const [key, id] of [["title", "#p-title"], ["key", "#p-key"],
+                             ["meter", "#p-meter"], ["tempo", "#p-tempo"]]) {
+      const value = $(id).value.trim();
+      if (value) body.append(key, value);
+    }
 
     try {
       const res = await fetch("/api/convert", { method: "POST", body });
@@ -404,11 +472,16 @@
   const registerOf = (o) => (o < 0 ? "low" : o > 0 ? "high" : "mid");
 
   function render(data) {
+    currentBase = data.base || null;
     $("#song").textContent = data.title;
     $("#srcname").textContent = data.original_name;
-    $("#m-key").textContent = data.key;
-    $("#m-meter").textContent = data.meter;
     $("#m-secs").textContent = data.seconds + " 秒";
+    $("#e-title").value = data.title || "";
+    $("#e-key").value = data.key || "";
+    $("#e-meter").value = data.meter || "";
+    $("#e-tempo").value = data.tempo_qpm ?? "";
+    setStatus(data.tempo_source === "default"
+      ? "拍速用的是默认值（谱面没印 ♩=，你也没填）" : "", false);
 
     const c = data.counts;
     const parts = [`<b>${c.total}</b> 个音，<b>${c.letters}</b> 个换成了字母`];

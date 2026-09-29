@@ -36,6 +36,11 @@ from jianpu2letter import mapping, ocr_jianpu, overlay_letters  # noqa: E402
 
 FORMAT = "jianpu2letter-notes-v1"
 
+# 谱面没印拍速时的默认值。100 的依据：piano11 自己的 site_json 格式里写的就是
+# `"tempo_qpm": 100`；实测你参考视频的音轨是 95.7 BPM；另有一张谱印的是 ♩=103。
+# 三个锚点都落在 96~103，取整数 100。
+DEFAULT_TEMPO = 100.0
+
 _INSTRUCTIONS = [
     "line / index —— 第几行、该行第几个音（与 overlay 图上和 _review.json 里的 "
     "L03N029 这种 id 对应）。",
@@ -50,6 +55,10 @@ _INSTRUCTIONS = [
     "overlay.png 是**原图尺寸**，要换算过去就除以 scale。画高亮框靠它。",
     "unknown —— 只出现在 n 为 null 的音上。⚠ overlay 上的红框**不止这一种来源**："
     "判成休止的音若形状复核不像 0、也会画红框，而那些音的 n 仍然是 0、不带 unknown。",
+    "tempo_qpm —— 拍速，**四分音符/分钟**。做视频/试听的时间轴按它算。"
+    "`tempo_source` 说明来源：`manual`=人填的 / `default`=没人填、用的默认 100。"
+    "⚠ 谱面印的 ♩= 目前**没读**（piano11 会把它当表头噪音丢掉），所以别把 "
+    "default 当成「谱上就是这么写的」。",
 ]
 
 
@@ -143,7 +152,7 @@ def _notes_table(measures):
 
 
 def convert(image_path, outdir="out", *, title=None, key=None, meter=None,
-            measure_mode="vline"):
+            tempo=None, measure_mode="vline"):
     """把一张简谱图片转成两样产物，返回 (overlay_path, table_path, payload)。
 
     - `overlay_path` = `<outdir>/<图片名>_overlay.png`
@@ -184,6 +193,12 @@ def convert(image_path, outdir="out", *, title=None, key=None, meter=None,
         "key": _key_mark(key),
         "meter": meter or "4/4",
         "source": os.path.abspath(image_path),
+        # 拍速（四分音符/分钟）。piano11 **不读**页眉的 ♩=，所以这里只有两种来源：
+        # 调用方给的（"manual"）和默认值（"default"）。存来源是为了以后分得清
+        # "这个 100 是谱上写的" 还是 "没人填、系统猜的" —— 猜错会让视频速度错，
+        # 且不报错，属于静默错误。
+        "tempo_qpm": float(tempo) if tempo else DEFAULT_TEMPO,
+        "tempo_source": "manual" if tempo else "default",
         # 识别时把原图放大的倍数。每个音的 `box` 就长在这个缩放空间里：
         # 想换算到 `_overlay.png`（它是**原图尺寸**）就除以它。
         "scale": round(float(ocr_jianpu._LAST_SCALE or 1.0), 6),
