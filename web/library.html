@@ -1,0 +1,233 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>曲库 · 简谱认谱</title>
+<style>
+  :root {
+    --paper:  #E7E8E5;
+    --sheet:  #FCFBF9;
+    --ink:    #1B1D1F;
+    --ink-2:  #6E7377;
+    --ink-3:  #9AA0A2;
+    --rule:   #C9CCC6;
+    --font-ui:    "Microsoft YaHei", "PingFang SC", "Hiragino Sans GB", system-ui, sans-serif;
+    --font-sheet: "Songti SC", SimSun, "Noto Serif CJK SC", "Source Han Serif SC", serif;
+  }
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+
+  body {
+    margin: 0; background: var(--paper); color: var(--ink);
+    font: 15px/1.6 var(--font-ui);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  header {
+    position: sticky; top: 0; z-index: 5;
+    display: flex; align-items: baseline; gap: 20px;
+    padding: 14px 28px; background: var(--paper);
+    border-bottom: 1px solid var(--rule);
+  }
+  header h1 {
+    margin: 0; font-family: var(--font-sheet);
+    font-size: 19px; font-weight: 600; letter-spacing: .06em;
+  }
+  header .spacer { flex: 1; }
+  header a {
+    font-size: 14px; padding: 7px 16px; text-decoration: none;
+    color: var(--ink); background: var(--sheet); border: 1px solid var(--ink);
+  }
+  header a:hover { background: var(--ink); color: var(--sheet); }
+
+  main { padding: 24px 28px 56px; max-width: 1500px; }
+
+  /* ── 选歌 ───────────────────────────────────────────── */
+  .picker {
+    display: flex; align-items: baseline; flex-wrap: wrap; gap: 6px 18px;
+    padding: 22px 24px;
+    background: var(--sheet); border: 1px solid var(--rule);
+  }
+  .picker label {
+    font-family: var(--font-sheet); font-size: 24px; font-weight: 600;
+  }
+  .picker select {
+    font: inherit; font-size: 15px;
+    min-width: 300px; padding: 9px 12px;
+    color: var(--ink); background: var(--paper);
+    border: 1px solid var(--ink-3); border-radius: 0;
+  }
+  .picker select:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+  .picker .count { color: var(--ink-2); font-size: 13px; }
+  .picker .why {
+    flex-basis: 100%; margin: 4px 0 0;
+    color: var(--ink-2); font-size: 13.5px;
+  }
+
+  /* ── 一首的详情 ─────────────────────────────────────── */
+  #detail { margin-top: 24px; }
+  #detail .head {
+    display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px 28px;
+    padding-bottom: 14px; border-bottom: 1px solid var(--rule);
+  }
+  #detail h2 {
+    margin: 0; font-family: var(--font-sheet);
+    font-size: 27px; font-weight: 600;
+  }
+  #detail dl { display: flex; gap: 26px; margin: 0; }
+  #detail dl div { display: flex; align-items: baseline; gap: 7px; }
+  #detail dt { font-size: 12.5px; color: var(--ink-2); }
+  #detail dd { margin: 0; font-family: var(--font-sheet); font-size: 17px; }
+
+  .pair {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 22px;
+    margin-top: 20px; align-items: start;
+  }
+  @media (max-width: 900px) { .pair { grid-template-columns: 1fr; } }
+  .pair figure { margin: 0; }
+  .pair img {
+    display: block; width: 100%; height: auto;
+    background: var(--sheet); border: 1px solid var(--rule);
+  }
+  .pair figcaption {
+    margin-top: 8px; font-size: 12.5px; color: var(--ink-2);
+  }
+  .missing {
+    display: grid; place-items: center; height: 220px;
+    background: var(--sheet); border: 1px dashed var(--ink-3);
+    color: var(--ink-2); font-size: 13px; text-align: center; padding: 12px;
+  }
+
+  .links { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 22px; }
+  .links a {
+    padding: 8px 16px; font-size: 13.5px; text-decoration: none;
+    color: var(--ink); background: var(--sheet); border: 1px solid var(--rule);
+  }
+  .links a:hover { border-color: var(--ink); }
+  .links a:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
+
+  #empty { margin-top: 40px; color: var(--ink-2); }
+  #empty a { color: var(--ink); }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>简谱认谱 · 曲库</h1>
+  <span class="spacer"></span>
+  <a href="/">上传新图</a>
+</header>
+
+<main>
+  <section class="picker">
+    <label for="song">选择一首歌</label>
+    <select id="song">
+      <option value="">（还没选）</option>
+    </select>
+    <span class="count" id="count"></span>
+    <p class="why">选中后，下面只显示这一首的原谱和识别后的替换图。</p>
+  </section>
+
+  <section id="detail" hidden>
+    <div class="head">
+      <h2 id="title"></h2>
+      <dl>
+        <div><dt>调号</dt><dd id="m-key"></dd></div>
+        <div><dt>拍号</dt><dd id="m-meter"></dd></div>
+        <div><dt>音数</dt><dd id="m-total"></dd></div>
+        <div><dt>没认出/休止</dt><dd id="m-special"></dd></div>
+      </dl>
+    </div>
+
+    <div class="pair">
+      <figure id="fig-src">
+        <img id="img-src" alt="原谱">
+        <figcaption>原谱</figcaption>
+      </figure>
+      <figure>
+        <img id="img-over" alt="识别后的原位替换图：数字被盖成字母，没认出来的画红框">
+        <figcaption>已替换 —— 数字原位盖成字母，红框处要人工核对</figcaption>
+      </figure>
+    </div>
+
+    <div class="links">
+      <a id="dl-notes">下载 JSON</a>
+      <a id="open-over" target="_blank" rel="noopener">单独打开替换图</a>
+      <a id="open-src" target="_blank" rel="noopener">单独打开原谱</a>
+    </div>
+  </section>
+
+  <p id="empty" hidden>曲库里还没有结果。先去 <a href="/">上传一张图</a>，识别完就会出现在这里。</p>
+</main>
+
+<script>
+(() => {
+  const $ = (s) => document.querySelector(s);
+  let songs = [];
+
+  const blank = (msg) => {
+    const box = document.createElement("div");
+    box.className = "missing";
+    box.textContent = msg;
+    return box;
+  };
+
+  function show(song) {
+    if (!song) { $("#detail").hidden = true; return; }
+    $("#title").textContent = song.title;
+    $("#m-key").textContent = song.key || "—";
+    $("#m-meter").textContent = song.meter || "—";
+    $("#m-total").textContent = song.counts.total ?? "—";
+    const u = song.counts.unknown ?? 0, r = song.counts.rests ?? 0;
+    $("#m-special").textContent = `${u} / ${r}`;
+
+    $("#img-over").src = song.overlay_url;
+    $("#open-over").href = song.overlay_url;
+    $("#dl-notes").href = song.notes_url;
+    $("#dl-notes").download = song.base + "_notes.json";
+
+    // 原图是通过 JSON 里的绝对路径找回来的，可能已经不在了
+    const fig = $("#fig-src");
+    fig.innerHTML = "";
+    if (song.has_original) {
+      const img = document.createElement("img");
+      img.id = "img-src";
+      img.alt = "原谱";
+      img.src = song.original_url;
+      const cap = document.createElement("figcaption");
+      cap.textContent = "原谱";
+      fig.append(img, cap);
+      $("#open-src").href = song.original_url;
+      $("#open-src").hidden = false;
+    } else {
+      fig.append(blank("原图找不到了 —— 识别时记录的那个路径已经不存在。"), (() => {
+        const cap = document.createElement("figcaption");
+        cap.textContent = "原谱";
+        return cap;
+      })());
+      $("#open-src").hidden = true;
+    }
+    $("#detail").hidden = false;
+  }
+
+  fetch("/api/library").then(r => r.json()).then(data => {
+    songs = data.songs || [];
+    $("#count").textContent = songs.length ? `曲库里有 ${songs.length} 首` : "";
+    const sel = $("#song");
+    for (const s of songs) {
+      const opt = document.createElement("option");
+      opt.value = s.base;
+      opt.textContent = `${s.title}（${s.base}）`;
+      sel.append(opt);
+    }
+    $("#empty").hidden = songs.length > 0;
+    sel.addEventListener("change", () => show(songs.find(s => s.base === sel.value)));
+  }).catch(() => {
+    $("#empty").textContent = "读曲库失败了：服务端没响应。";
+    $("#empty").hidden = false;
+  });
+})();
+</script>
+</body>
+</html>

@@ -4,6 +4,8 @@ __pycache__/
 
 # 输出产物：由图片 + 代码重新生成，不进仓库
 out/
+web_out/
 
-# 本机设置（权限白名单之类，不跨机器共享）
+# 本机设置（权限白名单、预览器配置之类，不跨机器共享）
 .claude/settings.local.json
+.claude/launch.json

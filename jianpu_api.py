@@ -39,11 +39,17 @@ FORMAT = "jianpu2letter-notes-v1"
 _INSTRUCTIONS = [
     "line / index —— 第几行、该行第几个音（与 overlay 图上和 _review.json 里的 "
     "L03N029 这种 id 对应）。",
-    "n —— 原谱上的数字：0=休止，1..7=唱名，null=没认出来（overlay 上画了红框）。",
+    "n —— 原谱上的数字：0=休止，1..7=唱名，null=没认出来。",
     "o —— 音区：-1=低音点，0=中音，1=高音点（±2/±3 见 shift）。",
     "letter —— 转换后的字母谱键位；休止是 \"0\"，认不出来是 null。",
     "shift —— null / \"LSHIFT\" / \"RSHIFT\"：映射2 里 ±2、±3 音区要按 Shift，"
     "所以 letter 相同时靠它区分音区。",
+    "q —— 时值，**四分音符 = 1.0**（减时线每多一条减半、附点×1.5、延时线每条+1）。"
+    "做视频/试听要算秒数就按它来。",
+    "box —— [x, y, w, h]：该音在**识别用缩放图**上的像素框；顶层 `scale` 是那个倍数。"
+    "overlay.png 是**原图尺寸**，要换算过去就除以 scale。画高亮框靠它。",
+    "unknown —— 只出现在 n 为 null 的音上。⚠ overlay 上的红框**不止这一种来源**："
+    "判成休止的音若形状复核不像 0、也会画红框，而那些音的 n 仍然是 0、不带 unknown。",
 ]
 
 
@@ -69,6 +75,19 @@ def _letter(n, o):
         return mapping.key_for(int(n), int(o or 0))
     except ValueError:
         return None, None
+
+
+def _beats(note):
+    """这个音的时值，**四分音符 = 1.0**（跟着 review_io 的口径，别自己发明单位）。
+
+    公式与 `review_io.load_review` 里那行完全一致：减时线每多一条减半、附点乘 1.5、
+    延时线每条加一拍。放在这里是因为 OCR 现场才有 `markup`，而下游（做视频）只吃 JSON。
+    """
+    markup = note.get("markup") or {}
+    beams = int(markup.get("beams", 0))
+    dotted = bool(markup.get("dotted", False))
+    extend = int(markup.get("extend", 0))
+    return round((1.0 / (2 ** beams)) * (1.5 if dotted else 1.0) + extend, 4)
 
 
 def _notes_table(measures):
@@ -98,7 +117,14 @@ def _notes_table(measures):
                 o = int(note.get("o", 0) or 0)
                 letter, shift = _letter(n, o)
                 item = {"line": line_no, "index": len(notes_out) + 1,
-                        "n": n, "o": o, "letter": letter}
+                        "n": n, "o": o, "letter": letter,
+                        "q": _beats(note)}
+                # 像素框（在**识别用的缩放图**空间里，见顶层 scale）。
+                # 做视频要在图上画"当前音"的高亮框，这个框只有 OCR 现场有 ——
+                # `_review.json` 只存了 source_x，没有 y 和宽高，所以必须落在这里。
+                box = note.get("box")
+                if box is not None:
+                    item["box"] = [int(v) for v in box]
                 if shift:
                     item["shift"] = shift
                 if n is None:
@@ -158,6 +184,9 @@ def convert(image_path, outdir="out", *, title=None, key=None, meter=None,
         "key": _key_mark(key),
         "meter": meter or "4/4",
         "source": os.path.abspath(image_path),
+        # 识别时把原图放大的倍数。每个音的 `box` 就长在这个缩放空间里：
+        # 想换算到 `_overlay.png`（它是**原图尺寸**）就除以它。
+        "scale": round(float(ocr_jianpu._LAST_SCALE or 1.0), 6),
         "counts": counts,
         "_instructions": _INSTRUCTIONS,
         "lines": lines,
