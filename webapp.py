@@ -50,6 +50,26 @@ def index():
     return send_from_directory(WEB, "index.html")
 
 
+@app.after_request
+def _no_cache_pages(resp):
+    """页面本身**不许缓存**（HTML/JS/CSS）。
+
+    为什么必须有这条：`send_from_directory` 只给 `Last-Modified`，浏览器会用**启发式**
+    规则自己决定缓存多久（大约"距上次修改时间的 10%"），期间**连 revalidate 都不做**。
+    于是你改了页面 JS、刷新、看起来"加载了"，但浏览器跑的还是旧逻辑。
+
+    2026-09-29 踩到：视频的防缓存（URL 挂时间戳）是**页面 JS 里**加的，
+    而页面被缓存 → 新 JS 没生效 → 重渲完播放器还是**旧视频**，表现成
+    "我重跑了但《孤勇者》试演奏还是没歌词"（文件其实是新的，抽帧验过）。
+
+    `no-cache` = "用之前必须回来问一次"，便宜（304），不会每次都重传。
+    """
+    if resp.mimetype in ("text/html", "text/javascript", "application/javascript",
+                         "text/css"):
+        resp.headers["Cache-Control"] = "no-cache, must-revalidate"
+    return resp
+
+
 def _form_meta(form):
     """从表单里取那 4 个可手填的字段（空字符串 = 没填，用自动/默认值）。"""
     def num(name):
@@ -278,20 +298,20 @@ def library_notes(base):
 # ── 生成「试演奏」视频 ───────────────────────────────────────────────
 # 一次要渲几百到几千帧、约 1~3 分钟，所以**不在请求里等**：起一个后台子进程，
 # 页面轮询进度。这样失败了能看到日志尾巴，页面也不会干等到超时。
-VIDEO_SUFFIX = "_试演奏.mp4"
+VIDEO_SUFFIX = {"tiles": "_试演奏.mp4", "play": "_跟弹.mp4"}
 _RENDER = {"proc": None, "rid": None, "base": None, "title": "", "log": None,
-           "out": None, "started": 0.0}
+           "out": None, "style": "tiles", "started": 0.0}
 _RENDER_LOCK = threading.Lock()
 
 
-def _video_path(title):
+def _video_path(title, style):
     """视频落在**工程根目录**（和命令行 `make_video.py` 的默认行为一致）。
 
     名字由这里算（不是让 make_video 自己取），且写/读两边都用这一个函数 ——
     否则两边各自 sanitize，规则一漂就找不到文件。
     """
     name = re.sub(r'[\\/:*?"<>|]', "_", str(title or "").strip()) or "未命名"
-    return os.path.join(HERE, name + VIDEO_SUFFIX)
+    return os.path.join(HERE, name + VIDEO_SUFFIX[style])
 
 
 def _log_tail(path, lines=3):
@@ -306,6 +326,9 @@ def _log_tail(path, lines=3):
 def api_video_start():
     data = request.get_json(silent=True) or {}
     base = str(data.get("base") or "")
+    style = str(data.get("style") or "tiles")
+    if style not in VIDEO_SUFFIX:
+        return _fail(f"不认识的风格 {style!r}。")
     song = _song_index().get(base)
     if song is None:
         return _fail("曲库里没有这一首。", 404)
@@ -318,19 +341,20 @@ def api_video_start():
         rid = uuid.uuid4().hex[:12]
         os.makedirs(WORK, exist_ok=True)
         log_path = os.path.join(WORK, "render_" + rid + ".log")
-        out_path = _video_path(song["title"])
+        out_path = _video_path(song["title"], style)
         cmd = [sys.executable, os.path.join(HERE, "make_video.py"),
-               os.path.join(LIB, base + NOTES_SUFFIX), "-o", out_path]
+               os.path.join(LIB, base + NOTES_SUFFIX), "-o", out_path,
+               "--style", style]
         with open(log_path, "wb") as log:
             log.write(("$ " + " ".join(cmd) + "\n").encode("utf-8"))
             log.flush()
             proc = subprocess.Popen(cmd, cwd=HERE, stdout=log,
                                     stderr=subprocess.STDOUT,
                                     env={**os.environ, "PYTHONIOENCODING": "utf-8"})
-        _RENDER.update({"proc": proc, "rid": rid, "base": base,
+        _RENDER.update({"proc": proc, "rid": rid, "base": base, "style": style,
                         "title": song["title"], "log": log_path,
                         "out": out_path, "started": time.time()})
-    return jsonify({"ok": True, "rid": rid, "title": song["title"],
+    return jsonify({"ok": True, "rid": rid, "title": song["title"], "style": style,
                     "tempo_qpm": song.get("tempo_qpm")})
 
 
@@ -343,29 +367,31 @@ def api_video_status(rid):
             return _fail("没有这个渲染任务了（服务重启过？重新点一次生成视频）。", 404)
         proc, log, out = _RENDER["proc"], _RENDER["log"], _RENDER["out"]
         base, title = _RENDER["base"], _RENDER["title"]
-        started = _RENDER["started"]
+        style, started = _RENDER["style"], _RENDER["started"]
         code = proc.poll() if proc else None
     state = "running" if code is None else ("done" if code == 0 else "failed")
     payload = {
-        "ok": True, "state": state, "title": title, "base": base,
+        "ok": True, "state": state, "title": title, "base": base, "style": style,
         "seconds": round(time.time() - started, 1),
         "log": _log_tail(log),
     }
     if state == "done" and os.path.isfile(out):
-        payload["url"] = f"/video/{base}"
+        payload["url"] = f"/video/{base}/{style}"
         payload["name"] = os.path.basename(out)
         payload["bytes"] = os.path.getsize(out)
     return jsonify(payload)
 
 
-@app.get("/video/<base>")
-def video_file(base):
+@app.get("/video/<base>/<style>")
+def video_file(base, style):
+    if style not in VIDEO_SUFFIX:
+        return "不认识的风格。", 404
     song = _song_index().get(base)
     if song is None:
         return "曲库里没有这一首。", 404
-    path = _video_path(song["title"])
+    path = _video_path(song["title"], style)
     if not os.path.isfile(path):
-        return "这首歌还没渲过视频（或文件被删了）。", 404
+        return "这首歌还没渲过这种视频（或文件被删了）。", 404
     # conditional=True 支持 Range 请求 —— <video> 拖动进度条要靠它
     return send_file(path, conditional=True)
 

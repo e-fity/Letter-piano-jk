@@ -28,7 +28,9 @@ import glob
 import inspect
 import json
 import os
+import shutil
 import sys
+import tempfile
 import time
 
 import cv2
@@ -111,6 +113,27 @@ def check_deps():
     return bad
 
 
+def convert_into(src, base, keep):
+    """调 `convert()`，再把产物**按 `base` 命名**放进曲库。
+
+    ⚠ **不能**直接 `convert(src, outdir=LIB)` —— 产物名取的是**源文件名**
+    （`convert` 的约定），而网页上传的歌 `source` 指向 `web_out/<id>/upload.*`，
+    名字会变成 `upload`：于是**写错文件**（覆盖 `out/upload_*`，自己那首反而不更新，
+    mtime 都不动）。2026-09-29 踩到：17 首里有 3 首（source 指向 web_out 的）
+    歌词一直是 0，查了半天是这里。
+
+    先写到临时目录再按 base 复制过去 —— 和网页 `/api/convert` 那边的做法一致。
+    """
+    tmp = tempfile.mkdtemp(prefix="jksync_")
+    try:
+        overlay, table, payload = jianpu_api.convert(src, outdir=tmp, **keep)
+        shutil.copyfile(overlay, os.path.join(LIB, base + "_overlay.png"))
+        shutil.copyfile(table, os.path.join(LIB, base + NOTES_SUFFIX))
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+    return payload
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="把 out/ 里的曲目重跑一遍，同步到当前识别代码。")
     parser.add_argument("names", nargs="*", help="只重跑这几首（不传=全部）")
@@ -147,8 +170,21 @@ def main(argv=None):
     changed = 0
     for it in runnable:
         before = red_box_count(it["overlay_path"])
+        # 先把**手填的 4 项**读出来，重跑时传回去 —— 否则识别只产「页眉读到的曲名/调号」
+        # 和「默认 4/4、100」，你填的 J 就被盖成 100 了（静默丢数据）。
+        # 规则和网页上传那边一致：已存的优先于自动/默认；tempo 只在原来源是 manual
+        # 时才沿用，免得把「默认 100」误标成「人工填的」。
+        old = {}
         try:
-            jianpu_api.convert(it["source"], outdir=LIB)
+            with open(it["notes_path"], "r", encoding="utf-8") as fp:
+                old = json.load(fp)
+        except (OSError, ValueError):
+            old = {}
+        keep = {k: old.get(k) for k in ("title", "key", "meter")}
+        if old.get("tempo_source") == "manual":
+            keep["tempo"] = old.get("tempo_qpm")
+        try:
+            convert_into(it["source"], it["base"], keep)
         except Exception as exc:  # noqa: BLE001 —— 一张失败不该中断整批
             print(f"  {it['base']:<6} ★失败: {type(exc).__name__}: {exc}")
             continue

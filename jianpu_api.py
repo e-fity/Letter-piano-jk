@@ -59,6 +59,8 @@ _INSTRUCTIONS = [
     "`tempo_source` 说明来源：`manual`=人填的 / `default`=没人填、用的默认 100。"
     "⚠ 谱面印的 ♩= 目前**没读**（piano11 会把它当表头噪音丢掉），所以别把 "
     "default 当成「谱上就是这么写的」。",
+    "lyric —— 这个音对应的歌词（可能多个字，即一字多音/拖腔）；没有就不出现这个键。"
+    "⚠ **只有第一段**：一行底下叠着多段歌词时，piano11 只留最上面那一段、其余丢弃。",
 ]
 
 
@@ -134,6 +136,13 @@ def _notes_table(measures):
                 box = note.get("box")
                 if box is not None:
                     item["box"] = [int(v) for v in box]
+                # 歌词（可能多个字对应一个音，即一字多音/拖腔）。
+                # ⚠ 只有**第一段**：piano11 的 OCR 在"一行底下叠着多段歌词"时
+                # 只留最上面那一段（见 ocr_jianpu.py 里那段注释），其余几段被丢弃，
+                # 所以这里也拿不到。要补多段得改 piano11。
+                lyric = str(note.get("lyric") or "").strip()
+                if lyric:
+                    item["lyric"] = lyric
                 if shift:
                     item["shift"] = shift
                 if n is None:

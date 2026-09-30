@@ -209,10 +209,17 @@
     </div>
 
     <div class="videobox">
-      <div class="row">
-        <button class="btn" id="make-video">生成试演奏视频</button>
+      <div class="row" id="video-row">
+        <button class="btn" data-style="tiles">落块视频</button>
+        <button class="btn" data-style="play">谱面跟弹视频</button>
         <span class="status" id="video-status"></span>
       </div>
+      <p class="srcname">
+        <strong>落块</strong>：7 车道音游式落块，块高=时值。
+        <strong>谱面跟弹</strong>：上半原谱 + 粉色游标压着当前音，下半**电脑键盘**高亮要按的键
+        （映射2 的三档正好是键盘三排：低音 ZXCVBNM／中音 SDFGHJK／高音 ERTYUIO）。
+        两者都按这首歌的 J 算速度、都带合成的主旋律。
+      </p>
       <div id="video-wrap" hidden>
         <video id="video" controls playsinline preload="metadata"></video>
         <p class="srcname">已渲 <span id="v-info"></span>
@@ -291,7 +298,7 @@
     $("#video-wrap").hidden = true;
     $("#video").removeAttribute("src");
     $("#video-status").textContent = "";
-    $("#make-video").disabled = false;
+    setVBusy(false);
 
     $("#img-over").src = song.overlay_url;
     $("#open-over").href = song.overlay_url;
@@ -322,10 +329,12 @@
     $("#detail").hidden = false;
   }
 
-  // ── 生成试演奏视频（后台渲，轮询进度）────────────────────
+  // ── 生成视频（后台渲，轮询进度）。两种风格各一个按钮 ──────────
   // 一次要渲几百到几千帧、1~3 分钟，所以**不能在请求里等**：起一个后台进程，
   // 这里每 2 秒问一次。好处是失败了能看到日志尾巴、页面也不会干等到超时。
-  const vBtn = $("#make-video");
+  const vLabel = { tiles: "落块", play: "谱面跟弹" };
+  const vBtns = [...document.querySelectorAll("#video-row button")];
+  const setVBusy = (on) => vBtns.forEach(b => { b.disabled = on; });
 
   const setVStatus = (text, bad) => {
     const el = $("#video-status");
@@ -333,57 +342,63 @@
     el.classList.toggle("bad", !!bad);
   };
 
-  async function pollVideo(rid) {
+  async function pollVideo(rid, style) {
     try {
       const res = await fetch("/api/video/" + rid);
       const d = await res.json();
       if (!d.ok) throw new Error(d.error || "查不到渲染状态。");
       if (d.state === "running") {
         const tail = (d.log || []).slice(-1)[0] || "";
-        setVStatus(`渲染中… 已用 ${Math.round(d.seconds)} 秒　${tail}`, false);
-        setTimeout(() => pollVideo(rid), 2000);
+        setVStatus(`渲染中…（${vLabel[style]}）已用 ${Math.round(d.seconds)} 秒　${tail}`, false);
+        setTimeout(() => pollVideo(rid, style), 2000);
         return;
       }
       if (d.state === "failed") {
-        const tail = (d.log || []).slice(-1)[0] || "";
-        setVStatus("渲染失败：" + tail, true);
-        vBtn.disabled = false;
+        setVStatus("渲染失败：" + ((d.log || []).slice(-1)[0] || ""), true);
+        setVBusy(false);
         return;
       }
-      $("#video").src = d.url;
-      const dl = $("#v-dl");
-      dl.href = d.url;
-      dl.download = d.name;
-      $("#v-info").textContent = `耗时 ${Math.round(d.seconds)} 秒，${(d.bytes / 1048576).toFixed(1)} MB`;
+      // ⚠ 加时间戳防缓存：视频 URL 是固定的（/video/<曲名>/<风格>），重渲之后
+      // 文件名没变，浏览器会把**上一次的视频**从缓存里拿出来放 —— 表现就是
+      // "我明明重渲了，画面还是旧的"。图片那边早就有这个问题，视频这边漏了。
+      const url = d.url + "?v=" + Date.now();
+      $("#video").src = url;
+      $("#v-dl").href = url;
+      $("#v-dl").download = d.name;
+      $("#v-info").textContent =
+        `${vLabel[style]}　耗时 ${Math.round(d.seconds)} 秒，${(d.bytes / 1048576).toFixed(1)} MB`;
       $("#video-wrap").hidden = false;
       setVStatus("渲染完成 —— 下面可以直接看，或点「下载 mp4」", false);
-      vBtn.disabled = false;
+      setVBusy(false);
     } catch (err) {
       setVStatus(err.message, true);
-      vBtn.disabled = false;
+      setVBusy(false);
     }
   }
 
-  vBtn.addEventListener("click", async () => {
-    if (!current) return;
-    $("#video-wrap").hidden = true;
-    vBtn.disabled = true;
-    setVStatus("正在起渲染…", false);
-    try {
-      const res = await fetch("/api/video", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ base: current.base }),
-      });
-      const d = await res.json();
-      if (!d.ok) throw new Error(d.error || "起不了渲染。");
-      setVStatus(`渲染中…（J=${d.tempo_qpm}）`, false);
-      pollVideo(d.rid);
-    } catch (err) {
-      setVStatus(err.message, true);
-      vBtn.disabled = false;
-    }
-  });
+  for (const btn of vBtns) {
+    btn.addEventListener("click", async () => {
+      if (!current) return;
+      const style = btn.dataset.style;
+      $("#video-wrap").hidden = true;
+      setVBusy(true);
+      setVStatus(`正在起「${vLabel[style]}」渲染…`, false);
+      try {
+        const res = await fetch("/api/video", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ base: current.base, style }),
+        });
+        const d = await res.json();
+        if (!d.ok) throw new Error(d.error || "起不了渲染。");
+        setVStatus(`渲染中…（${vLabel[style]}，J=${d.tempo_qpm}）`, false);
+        pollVideo(d.rid, style);
+      } catch (err) {
+        setVStatus(err.message, true);
+        setVBusy(false);
+      }
+    });
+  }
 
   fetch("/api/library").then(r => r.json()).then(data => {
     songs = data.songs || [];
