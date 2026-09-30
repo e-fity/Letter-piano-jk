@@ -25,10 +25,23 @@ import json
 import os
 import sys
 
-PIANO11 = os.environ.get("JIANPU_PIANO11") or r"D:\Letter piano11"
-if not os.path.isdir(PIANO11):
-    raise ImportError(f"找不到 jianpu2letter 工程目录：{PIANO11}"
-                      f"（设环境变量 JIANPU_PIANO11 指到正确的目录）")
+# 识别包（jianpu2letter）在哪里 —— 按顺序找**第一个真的有它**的目录：
+#   ① 环境变量 JIANPU_PIANO11（显式指定，优先）
+#   ② **本文件的上级目录** —— 本工程作为 piano11 的子目录（如 `D:\Letter piano11\jk`）时，
+#      识别包就在上一级；这样搬过去不用配任何环境变量，clone 到哪都能跑 ✓
+#   ③ `D:\Letter piano11`（本工程独立放在别处时的兜底）
+_HERE = os.path.dirname(os.path.abspath(__file__))
+PIANO11 = next((p for p in (os.environ.get("JIANPU_PIANO11"),
+                            os.path.dirname(_HERE),
+                            r"D:\Letter piano11")
+                if p and os.path.isdir(os.path.join(p, "jianpu2letter"))), None)
+if PIANO11 is None:
+    raise ImportError(
+        "找不到 jianpu2letter 工程目录（那套识别代码）。按顺序找过：\n"
+        "  ① 环境变量 JIANPU_PIANO11\n"
+        "  ② 本文件的上级目录 %s\n"
+        "  ③ D:\\Letter piano11\n"
+        "设 JIANPU_PIANO11 指到含 jianpu2letter 的目录即可。" % os.path.dirname(_HERE))
 if PIANO11 not in sys.path:
     sys.path.insert(0, PIANO11)
 
