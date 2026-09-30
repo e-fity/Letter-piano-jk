@@ -305,13 +305,14 @@ _RENDER_LOCK = threading.Lock()
 
 
 def _video_path(title, style):
-    """视频落在**工程根目录**（和命令行 `make_video.py` 的默认行为一致）。
+    """视频落在**工程根目录下的 `视频/`**（和命令行 `make_video.py` 的默认一致）。
 
     名字由这里算（不是让 make_video 自己取），且写/读两边都用这一个函数 ——
     否则两边各自 sanitize，规则一漂就找不到文件。
+    ⚠ 子目录名必须和 `make_video.py` 里的 `VIDEO_DIR` 一致：那边写、这边读。
     """
     name = re.sub(r'[\\/:*?"<>|]', "_", str(title or "").strip()) or "未命名"
-    return os.path.join(HERE, name + VIDEO_SUFFIX[style])
+    return os.path.join(HERE, "视频", name + VIDEO_SUFFIX[style])
 
 
 def _log_tail(path, lines=3):
