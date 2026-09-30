@@ -106,11 +106,15 @@ def convert():
     rid = uuid.uuid4().hex[:12]
     workdir = os.path.join(WORK, rid)
     os.makedirs(workdir, exist_ok=True)
-    # 存成固定名：产物名因此可预测，也不用拿上传的文件名去拼路径。
-    src = os.path.join(workdir, "upload" + ext)
+    # 按**原文件名**存（只去掉路径危险字符），不要一律存成 `upload.<ext>`。
+    # 为什么：`convert()` 读不到页眉标题时拿**文件名**兜底 —— 一律存成 upload 的话，
+    # 曲名就变成 "upload"，而曲名又是**视频文件名** → 所有"页眉没标题"的歌都会
+    # 叫 `upload_试演奏.mp4` 互相覆盖。`_safe_stem` 去掉路径危险字符，workdir 又是
+    # 随机 uuid，所以这样存没有路径风险。
+    stem = _safe_stem(upload.filename)
+    src = os.path.join(workdir, stem + ext)
     upload.save(src)
 
-    stem = _safe_stem(upload.filename)
     meta = _form_meta(request.form)
 
     # 曲库里已有这首 → 表单没填的字段**沿用已存的**。
