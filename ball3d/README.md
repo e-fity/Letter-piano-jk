@@ -2,6 +2,8 @@
 
 当前默认入口是 [Three.js 快速版](realtime/README.md)：Blender 制作参考图木板和金色双轨模型，Three.js 按 JSON 时间轴输出视频。当前轨道仅用于按持续时间判定的长音和滑音，休止滞空；支持可选 `duration_sec` / `pitch_bend`，旧 q 时值明确标为推算。模型不带示例球。用法与字段见 [快速版说明](realtime/README.md)，最新验收见 [长音与滑音验收](out/expressive_rails/ACCEPTANCE.md)。以下为仍保留的原 Blender 渲染入口说明。
 
+开发过程、任务需求与历史审核记录已合并到 [开发文档总汇](docs/DEVELOPMENT_HISTORY.md)。
+
 A standalone generator (this directory only, no changes to the rest of the
 project) that turns a `jianpu2letter-notes-v1` score into a portrait MP4:
 a pearl-like ball hops across small suspended piano-like boards, with real
@@ -86,9 +88,9 @@ D:/python/python11/python.exe "D:/Letter piano jk/ball3d/make_ball_video.py" `
 
 **已验证（2026-10-09，Codex 独立审核）：** 66 项测试全部通过。最终代码已导出并完整解码 12 秒 / 360 帧 / 360x640 / 30fps 的《孤勇者》样片，包含 AAC 音轨；两个不同调号、含休止与重复音的小型简谱也完成顺序批量导出和解码。整首《孤勇者》的 335 个落点、42 个休止符、完整时间轴和合成 WAV 已独立核对。
 
-**尚未验证：** 整曲 720x1280 视频和长时间、大批量连续运行。当前版本按原型交付；音色、画面精细度和渲染吞吐量仍有改进空间。详细证据见 [审核报告](REVIEW_REPORT.md)。
+**尚未验证：** 整曲 720x1280 视频和长时间、大批量连续运行。当前版本按原型交付；音色、画面精细度和渲染吞吐量仍有改进空间。详细证据见 [审核报告](docs/DEVELOPMENT_HISTORY.md#doc-review-report)。
 
-**性能实测（2026-10-10）：** 固定 10 秒、720x1280、30fps、16 次采样，优化前 233.67 秒，优化后 107.33 秒，约 2.18 倍速度，耗时减少 54.07%。73 项测试通过。300 帧中 284 帧逐像素相同，剩余 16 帧合计 58 个 RGB 分量有极小变化（最大 2/255）；音频逐字节相同。详见 [性能审核报告](PERFORMANCE_REPORT.md)。命令不变，默认使用优化路径。整曲约半小时仅为短片外推，尚未重渲整曲验证。
+**性能实测（2026-10-10）：** 固定 10 秒、720x1280、30fps、16 次采样，优化前 233.67 秒，优化后 107.33 秒，约 2.18 倍速度，耗时减少 54.07%。73 项测试通过。300 帧中 284 帧逐像素相同，剩余 16 帧合计 58 个 RGB 分量有极小变化（最大 2/255）；音频逐字节相同。详见 [性能审核报告](docs/DEVELOPMENT_HISTORY.md#doc-performance-report)。命令不变，默认使用优化路径。整曲约半小时仅为短片外推，尚未重渲整曲验证。
 
 画面是程序生成的 3D 场景，**不是**对参考视频的复刻：正交相机（`ortho_scale 8.0`，
 偏移约 `(-3,-6,5.5)`，瞄准点比小球领先 `0.6 m`）、中性灰地面与背景、深色悬浮
@@ -224,7 +226,7 @@ Reviewer verification: 73 tests passed. All 300 decoded PNG frames were compared
 284 are byte-for-byte equal as pixel arrays. The remaining frames have only 58
 changed RGB components in total, maximum channel difference 2/255. Generated WAV
 files are byte-identical. Both MP4 files fully decode with 300 frames at 30 fps.
-See [the performance report](PERFORMANCE_REPORT.md) and
+See [the performance report](docs/DEVELOPMENT_HISTORY.md#doc-performance-report) and
 `out/perf_20261010/comparison.json` for the evidence.
 
 ## Files
